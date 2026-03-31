@@ -17,7 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: add-ollama-service
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
       
@@ -40,4 +40,4 @@ jobs:
       
       - name: Push changes
         run: |
-          git push origin add-ollama-service
+          git push origin main
