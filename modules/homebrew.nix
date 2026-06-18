@@ -151,7 +151,7 @@ let
         };
         description = ''
           Extra environment variables to set when {command}`nix-darwin` invokes
-          {command}`brew bundle [install]` during system activation.
+          {command}`brew bundle [install]` during system checks and activation.
 
           Useful for setting Homebrew's `HOMEBREW_NO_*` variables (e.g.,
           `HOMEBREW_NO_ENV_HINTS`, `HOMEBREW_NO_ANALYTICS`, `HOMEBREW_NO_UPDATE_REPORT_NEW`)
@@ -172,18 +172,31 @@ let
         '';
       };
 
-      brewBundleCmd = mkInternalOption { type = types.str; };
+      brewBundleCmd = mkInternalOption { type = types.functionTo types.str; };
     };
 
     config = {
-      brewBundleCmd = concatStringsSep " " (
-        optional (!config.autoUpdate) "HOMEBREW_NO_AUTO_UPDATE=1"
+      brewBundleCmd = { onlyCheck }: concatStringsSep " " (
+        [
+          ''PATH="${cfg.prefix}/bin:${lib.makeBinPath [ pkgs.mas ]}:$PATH"''
+          "sudo"
+          "--preserve-env=PATH"
+          "--user=${escapeShellArg cfg.user}"
+          "--set-home"
+          "env"
+        ]
+        ++ optional (onlyCheck || !config.autoUpdate) "HOMEBREW_NO_AUTO_UPDATE=1"
         ++ mapAttrsToList (k: v: "${k}=${escapeShellArg v}") config.extraEnv
         ++ [ "brew bundle --file='${brewfileFile}'" ]
-        ++ optional (!config.upgrade) "--no-upgrade"
-        ++ optional (config.cleanup == "uninstall") "--cleanup"
-        ++ optional (config.cleanup == "zap") "--cleanup --zap"
-        ++ config.extraFlags
+        ++ (
+          if onlyCheck then
+            [ "cleanup 2>&1" ]
+          else
+            optional (!config.upgrade) "--no-upgrade"
+            ++ optional (config.cleanup == "uninstall") "--force-cleanup"
+            ++ optional (config.cleanup == "zap") "--zap --force-cleanup"
+            ++ config.extraFlags
+        )
       );
     };
   };
@@ -274,6 +287,21 @@ let
           for current behavior.
         '';
       };
+      trusted = mkOption {
+        type = types.bool;
+        default = false;
+        example = true;
+        description = ''
+          Whether to trust this tap during {command}`nix-darwin` system activation, by adding the
+          `trusted: true` option to its {command}`brew bundle` Brewfile entry.
+
+          Homebrew 6.0.0 enabled `HOMEBREW_REQUIRE_TAP_TRUST` by default, which refuses to
+          load formulae/casks from non-official taps that haven't been trusted, aborting activation.
+          Set this to `true` for non-official taps you control so their formulae and casks are
+          installed during activation. Official taps are always trusted, so this has no effect only
+          them.
+        '';
+      };
 
       brewfileLine = mkInternalOption { type = types.nullOr types.str; };
     };
@@ -287,7 +315,8 @@ let
           "tap ${sCfg.name}"
           + optionalString (sCfg ? clone_target) ", ${sCfg.clone_target}"
           + optionalString (sCfg ? force_auto_update)
-            ", force_auto_update: ${sCfg.force_auto_update}";
+            ", force_auto_update: ${sCfg.force_auto_update}"
+          + optionalString config.trusted ", trusted: true";
       };
   };
 
@@ -514,6 +543,27 @@ let
       # `version_file` is intentionally not exposed: it writes the installed version to a file
       # path relative to the `brew bundle` working directory, which is not meaningful during
       # nix-darwin system activation.
+      trusted = mkOption {
+        type = types.bool;
+        default = true;
+        example = false;
+        description = ''
+          Whether to trust this formula during {command}`nix-darwin` system activation, by adding the
+          `trusted: true` option to its {command}`brew bundle` Brewfile entry.
+
+          Homebrew 6.0.0 enabled `HOMEBREW_REQUIRE_TAP_TRUST` by default, which refuses to
+          load formulae from non-official taps that haven't been trusted, aborting activation. Set
+          this to `true` for a formula from a non-official tap you control so it is installed during
+          activation.
+
+          This only takes effect when {option}`name` is a fully-qualified name (`user/repo/formula`),
+          since only fully-qualified names map to a tap and can be trusted (and installed) on their
+          own. When {option}`name` is a plain formula name, it is resolved through your tapped
+          repositories, so trust must instead come from the containing tap being marked as trusted
+          (see [](#opt-homebrew.taps)). Official taps are always trusted, so this has no effect on
+          them.
+        '';
+      };
 
       brewfileLine = mkInternalOption { type = types.nullOr types.str; };
     };
@@ -521,14 +571,15 @@ let
     config =
       let
         sCfg = mkProcessedSubmodConfig config;
-        sCfgSubset = removeAttrs sCfg [ "name" "restart_service" "link" ];
+        sCfgSubset = removeAttrs sCfg [ "name" "restart_service" "link" "trusted" ];
       in
       {
         brewfileLine =
           "brew ${sCfg.name}"
           + optionalString (sCfgSubset != { }) ", ${mkBrewfileLineOptionsListString sCfgSubset}"
           + mkBrewfileLineBoolOrSymbolString "link" config sCfg
-          + mkBrewfileLineBoolOrSymbolString "restart_service" config sCfg;
+          + mkBrewfileLineBoolOrSymbolString "restart_service" config sCfg
+          + optionalString config.trusted ", trusted: true";
       };
   };
 
@@ -562,6 +613,27 @@ let
           on every {command}`brew bundle` run.
         '';
       };
+      trusted = mkOption {
+        type = types.bool;
+        default = true;
+        example = false;
+        description = ''
+          Whether to trust this cask during {command}`nix-darwin` system activation, by adding the
+          `trusted: true` option to its {command}`brew bundle` Brewfile entry.
+
+          Homebrew 6.0.0 enabled `HOMEBREW_REQUIRE_TAP_TRUST` by default, which refuses to
+          load casks from non-official taps that haven't been trusted, silently skipping them. Set
+          this to `true` for a cask from a non-official tap you control so it is installed during
+          activation.
+
+          This only takes effect when {option}`name` is a fully-qualified name (`user/repo/cask`),
+          since only fully-qualified names map to a tap and can be trusted (and installed) on their
+          own. When {option}`name` is a plain cask name, it is resolved through your tapped
+          repositories, so trust must instead come from the containing tap being marked as trusted
+          (see [](#opt-homebrew.taps)). Official taps are always trusted, so this has no effect on
+          them.
+        '';
+      };
 
       brewfileLine = mkInternalOption { type = types.nullOr types.str; };
     };
@@ -569,12 +641,13 @@ let
     config =
       let
         sCfg = mkProcessedSubmodConfig config;
-        sCfgSubset = removeAttrs sCfg [ "name" ];
+        sCfgSubset = removeAttrs sCfg [ "name" "trusted" ];
       in
       {
         brewfileLine =
           "cask ${sCfg.name}"
-          + optionalString (sCfgSubset != { }) ", ${mkBrewfileLineOptionsListString sCfgSubset}";
+          + optionalString (sCfgSubset != { }) ", ${mkBrewfileLineOptionsListString sCfgSubset}"
+          + optionalString config.trusted ", trusted: true";
       };
   };
 in
@@ -935,13 +1008,7 @@ in
     system.checks.text = mkIf (cfg.enable && cfg.onActivation.cleanup == "check") ''
       if [ -f "${cfg.prefix}/bin/brew" ]; then
         homebrewCleanupExitCode=0
-        homebrewCleanupResult=$(PATH="${cfg.prefix}/bin:${lib.makeBinPath [ pkgs.mas ]}:$PATH" \
-          sudo \
-            --preserve-env=PATH \
-            --user=${escapeShellArg cfg.user} \
-            --set-home \
-            env HOMEBREW_NO_AUTO_UPDATE=1 \
-            brew bundle cleanup --file='${brewfileFile}' 2>&1) || homebrewCleanupExitCode=$?
+        homebrewCleanupResult=$(${cfg.onActivation.brewBundleCmd { onlyCheck = true; }}) || homebrewCleanupExitCode=$?
         if [ "$homebrewCleanupExitCode" -eq 1 ]; then
           printf >&2 '\e[1;31merror: found Homebrew packages not listed in the Brewfile, aborting activation\e[0m\n'
           printf >&2 '%s\n' "$homebrewCleanupResult"
@@ -963,13 +1030,7 @@ in
       # Homebrew Bundle
       echo >&2 "Homebrew bundle..."
       if [ -f "${cfg.prefix}/bin/brew" ]; then
-        PATH="${cfg.prefix}/bin:${lib.makeBinPath [ pkgs.mas ]}:$PATH" \
-        sudo \
-          --preserve-env=PATH \
-          --user=${escapeShellArg cfg.user} \
-          --set-home \
-          env \
-          ${cfg.onActivation.brewBundleCmd}
+        ${cfg.onActivation.brewBundleCmd { onlyCheck = false; }}
       else
         echo -e "\e[1;31merror: Homebrew is not installed, skipping...\e[0m" >&2
       fi
