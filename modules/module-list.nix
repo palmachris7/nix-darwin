@@ -113,6 +113,7 @@
   ./programs/fish.nix
   ./programs/gnupg.nix
   ./programs/man.nix
+  ./programs/mas.nix
   ./programs/info
   ./programs/nix-index
   ./programs/ssh.nix
