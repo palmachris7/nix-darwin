@@ -15,6 +15,16 @@ with lib;
       '';
     };
 
+    system.defaults.loginwindow.HideUserAvatarAndName = mkOption {
+      type = types.nullOr types.bool;
+      default = null;
+      description = ''
+        Apple menu > System Settings > Lock Screen
+
+        Hides the username and photo on the login screen, showing only a password prompt. Default is false.
+      '';
+    };
+
     system.defaults.loginwindow.autoLoginUser = mkOption {
       type = types.nullOr types.str;
       default = null;
